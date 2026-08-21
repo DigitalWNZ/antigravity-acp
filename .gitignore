@@ -1,0 +1,6 @@
+venv/
+agy-acp-server/
+agy-acp-server.zip
+__pycache__/
+*.pyc
+*.log
