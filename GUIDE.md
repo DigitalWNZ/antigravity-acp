@@ -899,7 +899,14 @@ Requires: `export GOOGLE_API_KEY="your-key"`
 }
 ```
 
-The server handles the OAuth browser flow on first use.
+The server handles the OAuth browser flow on first use. No GCP project needed.
+
+**Requirements:**
+- A personal Google account (not a managed/enterprise account)
+- The account must be eligible for the Google AI free tier
+- If you see `User is ineligible for free-tier`, try a different personal Google account
+
+**Tested behavior:** The server opens a browser for Google sign-in. After authenticating, credentials are cached in `~/.gemini/` for future sessions.
 
 ### 4. Gemini Enterprise (OAuth)
 
@@ -913,6 +920,13 @@ The server handles the OAuth browser flow on first use.
 }
 ```
 
+**Requirements:**
+- A Google Workspace account with Gemini Enterprise subscription
+- The GCP project must have an active Gemini Enterprise license
+- If you see `No valid Gemini Enterprise license for the configured project`, your project does not have a Gemini Enterprise subscription — contact your Google Cloud administrator
+
+**Tested behavior:** The OAuth browser flow works the same as `oauth-personal`. After sign-in, the server validates the Gemini Enterprise license for the configured project before creating a session.
+
 ### 5. Gemini API Key
 
 ```json
@@ -922,6 +936,30 @@ The server handles the OAuth browser flow on first use.
 ```
 
 Requires: `export GEMINI_API_KEY="your-key"` (from Google AI Studio)
+
+### Important: OAuth Methods on Remote VMs
+
+The `oauth-personal` and `oauth-business` methods use a browser-based OAuth flow. The server starts a **local HTTP callback listener** (on a random port like `55693`) and opens a browser for sign-in. After authentication, Google redirects the browser to `http://localhost:<port>/callback?code=...`.
+
+**This causes problems on remote VMs:** The browser opens on your local machine, but the callback server is listening on the remote VM. When Google redirects to `localhost`, it hits your local machine (where nothing is listening) instead of the VM.
+
+**Workarounds for remote VMs:**
+
+1. **Port forwarding (recommended):** Forward the callback port from the VM to your local machine. In VS Code Remote, check the **Ports** tab — it may auto-forward. Or use SSH:
+   ```bash
+   # Run on your LOCAL machine (not the VM):
+   ssh -L <PORT>:localhost:<PORT> user@your-vm-ip
+   ```
+   Then reload the failed redirect URL in your browser.
+
+2. **Replay the redirect URL:** After sign-in, your browser will show a failed page at `http://localhost:<PORT>/callback?code=...&scope=...`. Copy the full URL from the address bar and run it on the VM:
+   ```bash
+   curl "http://localhost:<PORT>/callback?code=4/0A...&scope=..."
+   ```
+
+3. **Use `agent-platform` instead:** If you have a GCP project with Agent Platform access, use `agent-platform` with ADC. The `gcloud auth application-default login` command handles remote auth properly (it gives you a URL to visit and a code to paste back).
+
+**Once OAuth succeeds**, credentials are cached in `~/.gemini/` and subsequent runs won't need the browser flow again.
 
 ### Environment Variable Overrides
 
@@ -1026,6 +1064,36 @@ sudo apt install python3-venv
 # or for a specific version:
 sudo apt install python3.13-venv
 ```
+
+### "No valid Gemini Enterprise license" (oauth-business)
+
+**Symptom:**
+```
+No valid Gemini Enterprise license for the configured project 'my-project' / location 'global'.
+```
+
+**Cause:** The `oauth-business` auth type requires an active Gemini Enterprise subscription linked to the GCP project. This is a licensing issue, not an authentication issue — the OAuth sign-in succeeded.
+
+**Fix:** Use a project with Gemini Enterprise, or switch to `agent-platform` or `oauth-personal` auth.
+
+### "User is ineligible for free-tier" (oauth-personal)
+
+**Symptom:**
+```
+Onboarding failed: User is ineligible for free-tier. Your current account is not eligible for Antigravity.
+```
+
+**Cause:** Managed/enterprise Google accounts may not be eligible for the personal free tier.
+
+**Fix:** Sign in with a different personal Google account, or use `agent-platform` auth instead.
+
+### OAuth hangs on remote VM
+
+**Symptom:** Browser opens on your laptop, you sign in, then the page hangs at "localhost refused to connect."
+
+**Cause:** The OAuth callback server listens on `localhost` on the remote VM, but the browser redirect goes to `localhost` on your laptop.
+
+**Fix:** See [Important: OAuth Methods on Remote VMs](#important-oauth-methods-on-remote-vms) in the Authentication Options section.
 
 ### macOS: "agy_acp_server.par cannot be opened because it is from an unidentified developer"
 
