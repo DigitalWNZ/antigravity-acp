@@ -1,25 +1,158 @@
-# Antigravity ACP Server Setup & Client Guide
+# Antigravity ACP Server: Complete Setup & Client Guide
 
-Complete guide for setting up the Google Antigravity ACP Server with `agent-platform` authentication and calling it programmatically using the official ACP Python SDK.
-
-## Prerequisites
-
-- Python 3.10+ with `pip`
-- Google Cloud project with Gemini Enterprise Agent Platform access
-- Application Default Credentials (ADC) configured (`gcloud auth application-default login`)
-- Linux x86_64 (adjust download URL for other platforms)
+Complete step-by-step guide for setting up the Google Antigravity ACP Server and calling it programmatically using the official ACP Python SDK. This guide uses `agent-platform` authentication with Application Default Credentials (ADC).
 
 ---
 
-## Step 1: Configure Authentication
+## Table of Contents
 
-Create the settings directory and file:
+1. [Quick Start (TL;DR)](#quick-start)
+2. [Prerequisites](#prerequisites)
+3. [Step 1: Set Up Google Cloud Authentication](#step-1-set-up-google-cloud-authentication)
+4. [Step 2: Configure the Antigravity ACP Server](#step-2-configure-the-antigravity-acp-server)
+5. [Step 3: Download the Server Binary](#step-3-download-the-server-binary)
+6. [Step 4: Verify the Server Binary](#step-4-verify-the-server-binary)
+7. [Step 5: Install the ACP Python SDK](#step-5-install-the-acp-python-sdk)
+8. [Step 6: Create the ACP Client](#step-6-create-the-acp-client)
+9. [Step 7: Run the Client (Which Starts the Server)](#step-7-run-the-client)
+10. [How It Works](#how-it-works)
+11. [All Authentication Options](#all-authentication-options)
+12. [All Platform Download URLs](#all-platform-download-urls)
+13. [Troubleshooting](#troubleshooting)
+14. [References](#references)
+
+---
+
+## Quick Start
+
+For experienced users — run these commands in order:
+
+```bash
+# 1. Auth
+gcloud auth application-default login
+
+# 2. Config
+mkdir -p ~/.gemini/antigravity-acp
+cat > ~/.gemini/antigravity-acp/settings.json << 'EOF'
+{
+  "auth": { "type": "agent-platform" },
+  "gcp": { "project": "<YOUR_GCP_PROJECT_ID>", "location": "<YOUR_GCP_REGION>" }
+}
+EOF
+
+# 3. Download server (Linux x86_64)
+mkdir -p agy-acp-server
+curl -L -o agy-acp-server.zip "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-agy_acp_server_20260818_01_RC01-linux-x86_64.zip"
+unzip -o agy-acp-server.zip -d agy-acp-server && chmod +x agy-acp-server/agy_acp_server.par
+sudo groupadd nobody 2>/dev/null  # Linux only
+
+# 4. Install SDK
+python3 -m venv venv && source venv/bin/activate
+pip install agent-client-protocol
+
+# 5. Run (downloads acp_client.py from this repo first)
+python acp_client.py -m "Hello, what can you do?"
+```
+
+Read on for the full detailed walkthrough.
+
+---
+
+## Prerequisites
+
+Before you begin, make sure you have the following installed on your machine.
+
+### 1. Python 3.10 or later
+
+Check your Python version:
+
+```bash
+python3 --version
+```
+
+If you see `Python 3.10.x` or later, you're good. If not, install Python from your package manager.
+
+On Debian/Ubuntu, also install the `venv` module (it's not always included by default):
+
+```bash
+sudo apt install python3-venv
+```
+
+### 2. Google Cloud SDK (`gcloud` CLI)
+
+You need the `gcloud` CLI to set up Application Default Credentials. Check if it's installed:
+
+```bash
+gcloud --version
+```
+
+If not installed, follow Google's instructions: https://cloud.google.com/sdk/docs/install
+
+### 3. `curl` and `unzip`
+
+These are needed to download and extract the server binary:
+
+```bash
+# Debian/Ubuntu
+sudo apt install curl unzip
+
+# If unzip is unavailable, the guide includes a Python fallback
+```
+
+### 4. Google Cloud Access
+
+You need:
+- A **Google Cloud Project ID** with Gemini Enterprise Agent Platform access.
+- A **GCP region** where the Agent Platform is available (e.g. `us-central1`, or `global`).
+- Ask your GCP administrator if you don't have these.
+
+---
+
+## Step 1: Set Up Google Cloud Authentication
+
+The Antigravity ACP Server needs credentials to call the Google Cloud Agent Platform on your behalf. With `agent-platform` auth, you have two options:
+
+### Option A: Application Default Credentials (ADC) — Recommended
+
+ADC uses your Google Cloud login. Run this command and follow the browser-based login flow:
+
+```bash
+gcloud auth application-default login
+```
+
+After logging in, credentials are stored locally at `~/.config/gcloud/application_default_credentials.json`. The ACP server reads these automatically.
+
+Also set your project (so `gcloud` commands know which project to use):
+
+```bash
+gcloud config set project <YOUR_GCP_PROJECT_ID>
+```
+
+### Option B: Google API Key
+
+Alternatively, you can use a Google API key instead of ADC. Generate one in the Google Cloud Console, then set it as an environment variable:
+
+```bash
+export GOOGLE_API_KEY="your-api-key-here"
+```
+
+If you use an API key, you do NOT need to run `gcloud auth application-default login`.
+
+---
+
+## Step 2: Configure the Antigravity ACP Server
+
+The server reads its configuration from a JSON file in `~/.gemini/antigravity-acp/`.
+
+### Create the config directory
 
 ```bash
 mkdir -p ~/.gemini/antigravity-acp
 ```
 
-Write the settings file at `~/.gemini/antigravity-acp/settings.json`:
+### Create the settings file
+
+Create the file `~/.gemini/antigravity-acp/settings.json` with the following content:
 
 ```json
 {
@@ -33,92 +166,210 @@ Write the settings file at `~/.gemini/antigravity-acp/settings.json`:
 }
 ```
 
-Replace `<YOUR_GCP_PROJECT_ID>` and `<YOUR_GCP_REGION>` with your values (e.g. `cloud-llm-preview1` and `global`).
+**Replace the placeholders:**
+- `<YOUR_GCP_PROJECT_ID>` — your Google Cloud project ID (e.g. `cloud-llm-preview1`)
+- `<YOUR_GCP_REGION>` — the region for Agent Platform (e.g. `global` or `us-central1`)
 
-### Authentication Options
+**Example with real values:**
 
-| Auth Type | `auth.type` Value | Credentials |
-|---|---|---|
-| Google Account (personal) | `oauth-personal` | OAuth browser flow |
-| Gemini Enterprise | `oauth-business` | OAuth + GCP project/location |
-| Gemini API Key | `gemini-api-key` | `GEMINI_API_KEY` env var |
-| Agent Platform (ADC) | `agent-platform` | ADC + GCP project/location |
-| Agent Platform (API Key) | `agent-platform` | `GOOGLE_API_KEY` env var |
+```json
+{
+  "auth": {
+    "type": "agent-platform"
+  },
+  "gcp": {
+    "project": "cloud-llm-preview1",
+    "location": "global"
+  }
+}
+```
 
-### Environment Variables (Optional Overrides)
+You can create this file with a single command:
 
-| Variable | Purpose |
-|---|---|
-| `GEMINI_HOME` | Config directory (default: `~/.gemini/`) |
-| `GOOGLE_API_KEY` | API key for agent-platform auth |
-| `GOOGLE_CLOUD_PROJECT` | GCP project ID (overrides settings.json) |
-| `GOOGLE_CLOUD_LOCATION` | GCP region (overrides settings.json) |
-| `GEMINI_API_KEY` | Gemini API key (for `gemini-api-key` auth only) |
+```bash
+cat > ~/.gemini/antigravity-acp/settings.json << 'EOF'
+{
+  "auth": {
+    "type": "agent-platform"
+  },
+  "gcp": {
+    "project": "cloud-llm-preview1",
+    "location": "global"
+  }
+}
+EOF
+```
+
+### Verify the config file
+
+```bash
+cat ~/.gemini/antigravity-acp/settings.json
+```
+
+You should see the JSON you just wrote.
 
 ---
 
-## Step 2: Download the Server Binary
+## Step 3: Download the Server Binary
 
-Get the download URL from the ACP registry and extract:
+The Antigravity ACP Server is distributed as a pre-built binary. Download URLs are published in the [ACP Registry](https://github.com/agentclientprotocol/registry/blob/main/antigravity-acp/agent.json).
+
+### Create a directory for the server
 
 ```bash
 mkdir -p agy-acp-server
+```
 
-# Linux x86_64
+### Download the binary for your platform
+
+**Linux x86_64** (most common for cloud VMs and desktops):
+
+```bash
 curl -L -o agy-acp-server.zip \
   "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-agy_acp_server_20260818_01_RC01-linux-x86_64.zip"
+```
 
-# macOS ARM (Apple Silicon)
-# curl -L -o agy-acp-server.zip \
-#   "https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-agy_acp_server_20260818_01_RC01-darwin-arm64.zip"
+**macOS ARM (Apple Silicon — M1/M2/M3/M4):**
 
-# Extract
+```bash
+curl -L -o agy-acp-server.zip \
+  "https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-agy_acp_server_20260818_01_RC01-darwin-arm64.zip"
+```
+
+See [All Platform Download URLs](#all-platform-download-urls) for Linux ARM64, Windows x86_64, and Windows ARM64.
+
+### Extract the archive
+
+Using `unzip`:
+
+```bash
 unzip -o agy-acp-server.zip -d agy-acp-server
-# Or if unzip is not available:
-# python3 -c "import zipfile; zipfile.ZipFile('agy-acp-server.zip').extractall('agy-acp-server')"
+```
 
+If `unzip` is not available, use Python instead:
+
+```bash
+python3 -c "import zipfile; zipfile.ZipFile('agy-acp-server.zip').extractall('agy-acp-server')"
+```
+
+### Make the binary executable
+
+```bash
 chmod +x agy-acp-server/agy_acp_server.par
 ```
 
-### Linux-Only Prerequisite
+On macOS, you may also need to remove quarantine attributes:
 
-The server binary requires a `nobody` group. If it doesn't exist:
+```bash
+xattr -cr agy-acp-server/
+```
+
+### Linux only: create the `nobody` group
+
+The server binary requires a system group called `nobody`. On some Linux distributions (e.g. Debian), this group doesn't exist by default. **If you skip this, the server will crash on startup** with the error `Group nobody not found`.
+
+Check if it exists:
+
+```bash
+grep nobody /etc/group
+```
+
+If there's no output, create it:
 
 ```bash
 sudo groupadd nobody
 ```
 
-### Verify the Binary
+### Clean up the zip file (optional)
+
+```bash
+rm -f agy-acp-server.zip
+```
+
+---
+
+## Step 4: Verify the Server Binary
+
+After extracting, your directory should look like this:
+
+```
+agy-acp-server/
+├── agy_acp_server.par    # The server binary (~1.5 GB)
+└── localharness_external  # Supporting binary
+```
+
+Verify the binary runs:
 
 ```bash
 ./agy-acp-server/agy_acp_server.par --help
 ```
 
-You should see flags including `--debug` and `--notices`.
+**Expected output:**
 
-### Finding the Latest Version
+```
+Entry point for the AGY ACP Server.
+flags:
 
-The download URLs are in the ACP registry. To get the current version:
-
-```bash
-curl -s https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json | python3 -m json.tool | grep -A 20 antigravity
+/path/to/agy_acp_server.par:
+  --[no]debug: Enable debug logging.
+    (default: 'false')
+  --[no]notices: Print licenses and exit.
+    (default: 'false')
+...
 ```
 
-Or browse: https://github.com/agentclientprotocol/registry/blob/main/antigravity-acp/agent.json
+If you see this, the binary is working.
+
+> **Important:** You do NOT start the server manually in a terminal. The ACP server uses **stdio transport** — the client spawns it as a subprocess and communicates over stdin/stdout pipes. This is explained in [How It Works](#how-it-works).
 
 ---
 
-## Step 3: Install the ACP Python SDK
+## Step 5: Install the ACP Python SDK
+
+### Create a Python virtual environment
 
 ```bash
 python3 -m venv venv
+```
+
+### Activate the virtual environment
+
+```bash
 source venv/bin/activate
-pip install agent-client-protocol httpx
+```
+
+You should see `(venv)` in your terminal prompt.
+
+### Install the official ACP SDK
+
+```bash
+pip install agent-client-protocol
+```
+
+**Expected output (last line):**
+
+```
+Successfully installed agent-client-protocol-0.12.1 ...
+```
+
+### Verify the installation
+
+```bash
+python -c "import acp; print(f'ACP SDK version: {acp.__version__}')"
 ```
 
 ---
 
-## Step 4: Create the ACP Client
+## Step 6: Create the ACP Client
+
+Create a file called `acp_client.py` in your project directory. This client:
+
+1. **Spawns** the ACP server binary as a child process.
+2. **Connects** to it over stdin/stdout using JSON-RPC 2.0.
+3. **Initializes** the ACP protocol handshake.
+4. **Creates a session** and sends your prompt.
+5. **Prints** the agent's streamed response in real time.
+6. **Cleans up** the server process when done.
 
 Save the following as `acp_client.py`:
 
@@ -168,7 +419,15 @@ from acp.schema import (
 
 
 class TestClient(Client):
-    """ACP client that prints agent responses and auto-approves permissions."""
+    """ACP client that prints agent responses and auto-approves permissions.
+
+    The ACP protocol is bidirectional: the server can send requests TO the client
+    (e.g., asking to read a file or run a terminal command). This class implements
+    all required handler methods. In this test client:
+      - session_update: prints agent text, thoughts, and tool call info
+      - request_permission: auto-approves all tool calls
+      - file/terminal operations: rejected (not implemented in this test client)
+    """
 
     async def request_permission(
         self, session_id: str, tool_call: ToolCallUpdate,
@@ -307,14 +566,18 @@ async def main() -> int:
         level=logging.DEBUG if args.debug else logging.INFO
     )
 
+    # --- 1. Set up environment variables for the server process ---
     env = os.environ.copy()
-    env["PYTHONUNBUFFERED"] = "1"
-    env["PYTHONIOENCODING"] = "UTF-8"
+    env["PYTHONUNBUFFERED"] = "1"        # Prevent output buffering
+    env["PYTHONIOENCODING"] = "UTF-8"    # Ensure UTF-8 encoding
     env["GEMINI_HOME"] = os.path.expanduser("~/.gemini")
 
     server_path = os.path.abspath(args.server)
     server_dir = os.path.dirname(server_path)
 
+    # --- 2. Spawn the ACP server as a child process ---
+    # The server communicates over stdio (stdin/stdout), NOT over HTTP.
+    # The client spawns it and connects via pipes.
     print(f"Starting ACP server: {server_path}")
     proc = await asyncio.create_subprocess_exec(
         server_path,
@@ -330,6 +593,7 @@ async def main() -> int:
               file=sys.stderr)
         return 1
 
+    # Log server stderr in background (for debugging)
     async def log_stderr():
         while proc.stderr:
             line = await proc.stderr.readline()
@@ -340,9 +604,11 @@ async def main() -> int:
 
     stderr_task = asyncio.create_task(log_stderr())
 
+    # --- 3. Connect to the server using ACP protocol ---
     client_impl = TestClient()
     conn = connect_to_agent(client_impl, proc.stdin, proc.stdout)
 
+    # --- 4. ACP handshake (initialize) ---
     print("Initializing ACP connection...")
     init_result = await conn.initialize(
         protocol_version=PROTOCOL_VERSION,
@@ -357,10 +623,12 @@ async def main() -> int:
           f"v{init_result.agent_info.version}")
     print(f"Protocol version: {init_result.protocol_version}")
 
+    # --- 5. Create a session ---
     print("Creating session...")
     session = await conn.new_session(mcp_servers=[], cwd=os.getcwd())
     print(f"Session: {session.session_id}")
 
+    # --- 6. Send prompt(s) ---
     if args.message:
         print(f"\nYou: {args.message}")
         print("\nAgent: ", end="", flush=True)
@@ -373,6 +641,7 @@ async def main() -> int:
         print("\nInteractive mode. Type 'quit' to exit.\n")
         await interactive_loop(conn, session.session_id)
 
+    # --- 7. Clean up ---
     print("\nCleaning up...")
     if proc.returncode is None:
         proc.terminate()
@@ -388,139 +657,390 @@ if __name__ == "__main__":
 
 ---
 
-## Step 5: Run the Client
+## Step 7: Run the Client
 
-Activate the virtual environment first:
+> **Key concept:** You do NOT start the server separately. The client script spawns the server as a subprocess automatically. When you run `python acp_client.py`, it:
+> 1. Launches `agy_acp_server.par` as a child process
+> 2. Connects to it via stdin/stdout pipes (JSON-RPC 2.0)
+> 3. Performs the ACP handshake
+> 4. Sends your message and prints the response
+> 5. Terminates the server when done
+
+### Activate the virtual environment
+
+Every time you open a new terminal, activate the venv first:
 
 ```bash
 source venv/bin/activate
 ```
 
-### Send a Single Message
+You should see `(venv)` in your prompt.
+
+### Send a single message
 
 ```bash
 python acp_client.py -m "Hello, what can you do?"
 ```
 
-### Interactive Chat
+**Expected output:**
+
+```
+Starting ACP server: /path/to/agy-acp-server/agy_acp_server.par
+Initializing ACP connection...
+Connected to: antigravity-acp vagy_acp_server_20260818_01_RC01
+Protocol version: 1
+Creating session...
+Session: 27028f04-4788-428c-bcde-8777a6b2600f
+
+You: Hello, what can you do?
+
+Agent: [thought] **Exploring Capabilities**
+...
+
+Hello! I am **Antigravity**, an agentic AI assistant developed by Google DeepMind.
+
+Here is a summary of what I can help you with:
+* **Software Development & Refactoring**: Read, search, navigate, create, and edit code.
+* **Command Execution & Debugging**: Run terminal commands, test suites, builds, scripts.
+* **Planning & Architecture**: Draft implementation plans, generate architecture diagrams.
+* **Research & Web Search**: Search documentation, fetch live web resources.
+...
+
+Cleaning up...
+```
+
+> **Note:** The first run may take 30-60 seconds before you see `Initializing ACP connection...` because the 1.5 GB server binary needs to unpack itself.
+
+### Interactive chat mode
+
+Run without `-m` to enter an interactive conversation:
 
 ```bash
 python acp_client.py
 ```
 
-Type messages at the `You:` prompt. Type `quit` to exit.
+You'll see a `You:` prompt. Type your messages and press Enter. Type `quit` to exit.
 
-### Debug Mode
+```
+Interactive mode. Type 'quit' to exit.
+
+You: Explain what ACP is in one sentence.
+
+Agent: ACP (Agent Client Protocol) is an open protocol that enables any code
+editor or developer tool to connect to any AI coding agent through a
+standardized communication interface.
+
+You: quit
+
+Cleaning up...
+```
+
+### Debug mode
+
+To see detailed JSON-RPC messages and server logs:
 
 ```bash
 python acp_client.py --debug -m "Hello"
 ```
 
-### Custom Server Path
+### Custom server path
+
+If your server binary is in a different location:
 
 ```bash
 python acp_client.py --server /path/to/agy_acp_server.par -m "Hello"
+```
+
+### Redirect server logs to a file
+
+```bash
+python acp_client.py -m "Hello" 2>/tmp/acp_server.log
+cat /tmp/acp_server.log
 ```
 
 ---
 
 ## How It Works
 
+### Why There Is No "Start the Server" Step
+
+Unlike traditional HTTP APIs, the Antigravity ACP Server does NOT listen on a network port. Instead, it uses **stdio transport**:
+
+- The **client** spawns the server binary as a **child process**.
+- Communication happens over **stdin/stdout pipes** using **JSON-RPC 2.0** messages.
+- This is the same pattern used by LSP (Language Server Protocol) in code editors.
+
+This means:
+- There is no URL or port to connect to.
+- You don't run the server in a separate terminal.
+- The client manages the server's lifecycle (start, communicate, stop).
+
 ### Architecture
 
 ```
-┌──────────────┐    stdio (JSON-RPC 2.0)    ┌────────────────────┐
-│  ACP Client  │ ◄────────────────────────► │  agy_acp_server    │
-│  (Python)    │   stdin/stdout pipes        │  (.par binary)     │
-└──────────────┘                             └────────┬───────────┘
-                                                      │ ADC / API Key
-                                                      ▼
-                                             ┌────────────────────┐
-                                             │  Google Cloud      │
-                                             │  Agent Platform    │
-                                             └────────────────────┘
+┌──────────────────┐       stdin (JSON-RPC 2.0)       ┌────────────────────────┐
+│                  │  ──────────────────────────────►  │                        │
+│   ACP Client     │                                   │   agy_acp_server.par   │
+│   (Python)       │  ◄──────────────────────────────  │   (Server Binary)      │
+│                  │       stdout (JSON-RPC 2.0)       │                        │
+└──────────────────┘                                   └───────────┬────────────┘
+                                                                   │
+                                                                   │ ADC or API Key
+                                                                   ▼
+                                                       ┌────────────────────────┐
+                                                       │   Google Cloud         │
+                                                       │   Agent Platform       │
+                                                       └────────────────────────┘
 ```
 
 ### ACP Protocol Flow
 
-The Agent Client Protocol uses **JSON-RPC 2.0 over stdio**. The message sequence is:
+The conversation between client and server follows this sequence:
 
-1. **`initialize`** — Client sends protocol version and capabilities, server responds with agent info and supported auth methods.
-2. **`session/new`** — Client creates a conversation session, receives a `sessionId`.
-3. **`session/prompt`** — Client sends user content (text, images, etc.) to the agent.
-4. **`session/update`** (notification) — Server streams back agent responses: text chunks, thought chunks, tool call updates.
-5. **`session/close`** — Client ends the session.
+```
+Client                              Server
+  │                                    │
+  │──── initialize ───────────────────►│   1. Handshake: exchange protocol
+  │◄─── init result (agent info) ─────│      version and capabilities
+  │                                    │
+  │──── session/new ──────────────────►│   2. Create a conversation session
+  │◄─── session id ───────────────────│
+  │                                    │
+  │──── session/prompt ───────────────►│   3. Send user message
+  │◄─── session/update (streaming) ───│   4. Receive agent response chunks
+  │◄─── session/update (streaming) ───│      (text, thoughts, tool calls)
+  │◄─── session/update (streaming) ───│
+  │◄─── prompt result ────────────────│   5. Response complete
+  │                                    │
+  │──── session/close ────────────────►│   6. End session
+  │                                    │
+```
 
-The server may also send requests to the client for:
-- `session/request_permission` — ask permission before executing a tool
-- `fs/read_text_file` / `fs/write_text_file` — file system access
-- `terminal/create` — execute shell commands
-- `elicitation/create` — ask the user a structured question
+**Bidirectional requests:** During step 4, the server may also send requests TO the client:
+
+| Server Request | Purpose | Our Client's Response |
+|---|---|---|
+| `session/request_permission` | Ask before executing a tool | Auto-approve |
+| `fs/read_text_file` | Read a file from disk | Rejected (not implemented) |
+| `fs/write_text_file` | Write a file to disk | Rejected (not implemented) |
+| `terminal/create` | Run a shell command | Rejected (not implemented) |
+| `elicitation/create` | Ask the user a structured question | Declined |
 
 ### Key SDK Components
 
-| Component | Purpose |
+| Component | What It Does |
 |---|---|
-| `connect_to_agent()` | Wires stdin/stdout pipes into ACP JSON-RPC framing |
-| `Client` (base class) | Subclass to handle server-to-client requests/notifications |
-| `session_update()` | Receives streamed agent output (text, thoughts, tool calls) |
-| `text_block()` | Helper to create text content blocks for prompts |
-| `PROTOCOL_VERSION` | Current ACP protocol version constant |
+| `connect_to_agent(client, stdin, stdout)` | Wires stdin/stdout pipes into ACP JSON-RPC framing |
+| `Client` (base class) | Subclass this to handle server-to-client requests and notifications |
+| `conn.initialize(...)` | Performs the ACP handshake with the server |
+| `conn.new_session(...)` | Creates a new conversation session |
+| `conn.prompt(session_id, prompt)` | Sends a user message to the agent |
+| `session_update(session_id, update)` | Called when the agent streams response chunks back |
+| `text_block("...")` | Helper to create a text content block for prompts |
+| `PROTOCOL_VERSION` | The current ACP protocol version constant |
+
+### Project Directory Structure
+
+After completing all steps, your directory should look like this:
+
+```
+your-project/
+├── agy-acp-server/
+│   ├── agy_acp_server.par          # Server binary (~1.5 GB) — NOT committed to git
+│   └── localharness_external        # Supporting binary
+├── venv/                            # Python virtual environment — NOT committed to git
+├── acp_client.py                    # Your ACP client script
+├── settings.json                    # (Optional) local copy of your config
+├── GUIDE.md                         # This guide
+└── .gitignore                       # Excludes venv/ and agy-acp-server/
+```
+
+The server config lives separately at `~/.gemini/antigravity-acp/settings.json`.
+
+---
+
+## All Authentication Options
+
+The Antigravity ACP Server supports four authentication methods. Change the `auth.type` in `settings.json` to switch.
+
+### 1. Agent Platform with ADC (used in this guide)
+
+```json
+{
+  "auth": { "type": "agent-platform" },
+  "gcp": {
+    "project": "<YOUR_GCP_PROJECT_ID>",
+    "location": "<YOUR_GCP_REGION>"
+  }
+}
+```
+
+Requires: `gcloud auth application-default login`
+
+### 2. Agent Platform with Google API Key
+
+```json
+{
+  "auth": { "type": "agent-platform" },
+  "gcp": {
+    "project": "<YOUR_GCP_PROJECT_ID>",
+    "location": "<YOUR_GCP_REGION>"
+  }
+}
+```
+
+Requires: `export GOOGLE_API_KEY="your-key"`
+
+### 3. Google Account (Personal, OAuth)
+
+```json
+{
+  "auth": { "type": "oauth-personal" }
+}
+```
+
+The server handles the OAuth browser flow on first use.
+
+### 4. Gemini Enterprise (OAuth)
+
+```json
+{
+  "auth": { "type": "oauth-business" },
+  "gcp": {
+    "project": "<YOUR_GCP_PROJECT_ID>",
+    "location": "<YOUR_GCP_REGION>"
+  }
+}
+```
+
+### 5. Gemini API Key
+
+```json
+{
+  "auth": { "type": "gemini-api-key" }
+}
+```
+
+Requires: `export GEMINI_API_KEY="your-key"` (from Google AI Studio)
+
+### Environment Variable Overrides
+
+These override values in `settings.json`:
+
+| Variable | Purpose |
+|---|---|
+| `GEMINI_HOME` | Config directory (default: `~/.gemini/`) |
+| `GOOGLE_API_KEY` | API key for agent-platform auth |
+| `GOOGLE_CLOUD_PROJECT` | Overrides `gcp.project` in settings.json |
+| `GOOGLE_CLOUD_LOCATION` | Overrides `gcp.location` in settings.json |
+| `GEMINI_API_KEY` | API key for gemini-api-key auth |
+
+---
+
+## All Platform Download URLs
+
+| Platform | Download URL |
+|---|---|
+| Linux x86_64 | `https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-agy_acp_server_20260818_01_RC01-linux-x86_64.zip` |
+| Linux ARM64 | `https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-agy_acp_server_20260818_01_RC01-linux-arm64.zip` |
+| macOS ARM64 | `https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-agy_acp_server_20260818_01_RC01-darwin-arm64.zip` |
+| Windows x86_64 | `https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-agy_acp_server_20260818_01_RC01-windows-x86_64.zip` |
+| Windows ARM64 | `https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-agy_acp_server_20260818_01_RC01-windows-arm64.zip` |
+
+Binary filenames:
+- macOS / Linux: `agy_acp_server.par`
+- Windows: `agy_acp_server.exe`
+
+To find the latest version, check the ACP registry:
+
+```bash
+curl -s https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); [print(a['name'],a.get('version','')) for a in d.get('agents',[]) if 'antigravity' in a.get('id','')]"
+```
+
+Or browse: https://github.com/agentclientprotocol/registry/blob/main/antigravity-acp/agent.json
 
 ---
 
 ## Troubleshooting
 
-### "Group nobody not found"
+### "Group nobody not found" (Linux only)
 
-Linux only. Create the group:
+**Symptom:** Server crashes immediately with:
+```
+Check failed: LookupGIDByGroupName(groupname, &new_gid) Group nobody not found
+```
 
+**Fix:**
 ```bash
 sudo groupadd nobody
 ```
 
-### Server produces no output
+### Server takes a long time to start
 
-Ensure environment variables are set:
+The server binary is ~1.5 GB. On first run, it may take 30-60 seconds to unpack and initialize. Subsequent runs may be faster. This is normal — wait for the `Initializing ACP connection...` message.
+
+### No output at all / client hangs
+
+Make sure the environment variables are set. The client sets these automatically, but if running the server manually for debugging:
 
 ```bash
 export PYTHONUNBUFFERED=1
 export PYTHONIOENCODING=UTF-8
+export GEMINI_HOME="$HOME/.gemini"
 ```
-
-The server binary is ~1.5GB and may take 30-60 seconds to initialize on first run.
 
 ### Authentication errors
 
-For `agent-platform` with ADC, ensure credentials are set up:
-
+**For ADC:** Make sure you've logged in:
 ```bash
 gcloud auth application-default login
 ```
 
-Verify your project has Agent Platform access:
-
+**Verify your project has access:**
 ```bash
 gcloud config set project <YOUR_GCP_PROJECT_ID>
 ```
 
+**Check the settings file is correct:**
+```bash
+cat ~/.gemini/antigravity-acp/settings.json
+```
+
 ### "'PROVISIONED_THROUGHPUT' is not a valid ServiceTier"
 
-This is a non-fatal server warning. The agent response is still delivered correctly.
+This is a non-fatal server warning that appears in stderr after the response is delivered. Your agent response is still correct. You can safely ignore it.
 
-### Monitor server stderr
+### "Agent execution error"
+
+Check server stderr for details:
+```bash
+python acp_client.py -m "test" 2>/tmp/acp_debug.log
+cat /tmp/acp_debug.log
+```
+
+### `python3-venv` not found (Debian/Ubuntu)
 
 ```bash
-python acp_client.py --debug -m "test" 2>/tmp/acp_stderr.log
-cat /tmp/acp_stderr.log
+sudo apt install python3-venv
+# or for a specific version:
+sudo apt install python3.13-venv
+```
+
+### macOS: "agy_acp_server.par cannot be opened because it is from an unidentified developer"
+
+Remove the quarantine attribute:
+```bash
+xattr -cr agy-acp-server/
 ```
 
 ---
 
 ## References
 
-- [ACP Protocol Specification](https://github.com/agentclientprotocol/agent-client-protocol)
-- [ACP Python SDK](https://github.com/agentclientprotocol/python-sdk)
-- [ACP Python SDK Quickstart](https://agentclientprotocol.github.io/python-sdk/quickstart/)
-- [ACP Registry](https://github.com/agentclientprotocol/registry)
-- [Antigravity ACP Server Public Docs](https://antigravity.google/docs/ide/extensions)
+- [ACP Protocol Specification](https://github.com/agentclientprotocol/agent-client-protocol) — the full protocol spec
+- [ACP Python SDK](https://github.com/agentclientprotocol/python-sdk) — official Python SDK source
+- [ACP Python SDK Quickstart](https://agentclientprotocol.github.io/python-sdk/quickstart/) — SDK getting started guide
+- [ACP Registry](https://github.com/agentclientprotocol/registry) — registry of all ACP agents with download URLs
+- [Antigravity Docs](https://antigravity.google/docs/ide/extensions) — official Google Antigravity documentation
+- [ACP Python SDK Examples](https://github.com/agentclientprotocol/python-sdk/tree/main/examples) — client.py, echo_agent.py, etc.
