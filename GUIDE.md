@@ -933,9 +933,11 @@ The server handles the OAuth browser flow on first use. No GCP project needed.
 ```json
 {
   "auth": { "type": "oauth-business" },
-  "gcp": { "project": "xiaomi-project-003", "location": "global" }
+  "gcp": { "project": "agolis-allen-first", "location": "global" }
 }
 ```
+
+Also verified working with project `xiaomi-project-003`.
 
 **Common errors:**
 - `No valid Gemini Enterprise license` — the project lacks a Gemini Enterprise subscription
@@ -957,23 +959,44 @@ The `oauth-personal` and `oauth-business` methods use a browser-based OAuth flow
 
 **This causes problems on remote VMs:** The browser opens on your local machine, but the callback server is listening on the remote VM. When Google redirects to `localhost`, it hits your local machine (where nothing is listening) instead of the VM.
 
-**Workarounds for remote VMs:**
+**Workaround: Replay the redirect URL (tested and recommended):**
 
-1. **Port forwarding (recommended):** Forward the callback port from the VM to your local machine. In VS Code Remote, check the **Ports** tab — it may auto-forward. Or use SSH:
-   ```bash
-   # Run on your LOCAL machine (not the VM):
-   ssh -L <PORT>:localhost:<PORT> user@your-vm-ip
+1. Start the ACP client on the VM. The server will open a browser on your local machine for Google sign-in.
+2. Sign in with your Google account. The browser will then redirect to a URL like:
    ```
-   Then reload the failed redirect URL in your browser.
-
-2. **Replay the redirect URL:** After sign-in, your browser will show a failed page at `http://localhost:<PORT>/callback?code=...&scope=...`. Copy the full URL from the address bar and run it on the VM:
-   ```bash
-   curl "http://localhost:<PORT>/callback?code=4/0A...&scope=..."
+   http://127.0.0.1:33005/?state=...&code=4/0A...&scope=...
    ```
+3. This page will hang or show "connection refused" because port 33005 is on the VM, not your laptop.
+4. **Copy the full URL** from your browser's address bar.
+5. Run `curl` with that URL **on the VM**:
+   ```bash
+   curl "http://127.0.0.1:33005/?state=nHYm...&code=4/0ATsM...&scope=email%20https://..."
+   ```
+6. The OAuth flow completes, the token is cached, and the ACP session proceeds.
 
-3. **Use `agent-platform` instead:** If you have a GCP project with Agent Platform access, use `agent-platform` with ADC. The `gcloud auth application-default login` command handles remote auth properly (it gives you a URL to visit and a code to paste back).
+**Finding the callback port:** The server picks a random port each time. To find it:
+```bash
+ss -tlnp | grep agy_acp_server
+```
 
-**Once OAuth succeeds**, credentials are cached in `~/.gemini/` and subsequent runs won't need the browser flow again.
+**Other workarounds:**
+
+- **VS Code Remote port forwarding:** If using VS Code Remote SSH, the **Ports** tab may auto-forward the callback port. Check there before using `curl`.
+- **SSH port forwarding:** Forward the callback port manually:
+  ```bash
+  # Run on your LOCAL machine (not the VM):
+  ssh -L <PORT>:localhost:<PORT> user@your-vm-ip
+  ```
+  Then reload the failed redirect URL in your browser.
+- **Use `agent-platform` instead:** If you have a GCP project with Agent Platform access, use `agent-platform` with ADC. The `gcloud auth application-default login` command handles remote auth properly (it gives you a URL to visit and a code to paste back).
+
+**Switching users:** To sign in with a different Google account, delete the cached token before restarting:
+```bash
+rm -f ~/.gemini/antigravity-acp/acp_business_token.json   # for oauth-business
+rm -rf ~/.gemini/antigravity-acp/conversations/            # clear cached sessions
+```
+
+**Once OAuth succeeds**, credentials are cached at `~/.gemini/antigravity-acp/acp_business_token.json` and subsequent runs won't need the browser flow again.
 
 ### Environment Variable Overrides
 
