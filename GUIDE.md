@@ -505,7 +505,9 @@ class TestClient(Client):
             if isinstance(content, TextContentBlock):
                 print(f"[thought] {content.text}", flush=True)
         elif isinstance(update, ToolCallStart):
-            print(f"\n[tool: {update.name} ({update.kind})]", flush=True)
+            title = getattr(update, 'title', None) or getattr(update, 'name', 'unknown')
+            kind = getattr(update, 'kind', '')
+            print(f"\n[tool: {title} ({kind})]", flush=True)
         elif isinstance(update, ToolCallProgress):
             pass
 
@@ -925,7 +927,19 @@ The server handles the OAuth browser flow on first use. No GCP project needed.
 - The GCP project must have an active Gemini Enterprise license
 - If you see `No valid Gemini Enterprise license for the configured project`, your project does not have a Gemini Enterprise subscription — contact your Google Cloud administrator
 
-**Tested behavior:** The OAuth browser flow works the same as `oauth-personal`. After sign-in, the server validates the Gemini Enterprise license for the configured project before creating a session.
+**Tested behavior:** The OAuth browser flow works the same as `oauth-personal`. After sign-in, the server validates the Gemini Enterprise license for the configured project before creating a session. Credentials are cached in `~/.gemini/` so subsequent runs skip the browser flow.
+
+**Tested successfully with:**
+```json
+{
+  "auth": { "type": "oauth-business" },
+  "gcp": { "project": "xiaomi-project-003", "location": "global" }
+}
+```
+
+**Common errors:**
+- `No valid Gemini Enterprise license` — the project lacks a Gemini Enterprise subscription
+- `Unable to verify enterprise administrator controls due to missing IAM permissions` — your account needs IAM roles on the project (e.g. `roles/aiplatform.user`)
 
 ### 5. Gemini API Key
 

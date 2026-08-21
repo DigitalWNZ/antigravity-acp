@@ -115,7 +115,9 @@ class TestClient(Client):
             if isinstance(content, TextContentBlock):
                 print(f"[thought] {content.text}", flush=True)
         elif isinstance(update, ToolCallStart):
-            print(f"\n[tool start: {update.name} ({update.kind})]", flush=True)
+            title = getattr(update, 'title', None) or getattr(update, 'name', 'unknown')
+            kind = getattr(update, 'kind', '')
+            print(f"\n[tool: {title} ({kind})]", flush=True)
         elif isinstance(update, ToolCallProgress):
             pass
 
