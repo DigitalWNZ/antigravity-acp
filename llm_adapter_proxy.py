@@ -161,6 +161,15 @@ class GeminiProxy:
         log.info("→ POST %s (model=%s, stream=%s, %d bytes)",
                  backend_url, model, is_stream, len(body))
 
+        adapter_source = request.headers.get("x-adapter-source", "")
+        sso_email = request.headers.get("sso-email", "")
+        api_key_header = request.headers.get("x-goog-api-key", "")
+        log.info("  Gateway headers: x-adapter-source=%s, sso-email=%s", adapter_source, sso_email)
+        if api_key_header:
+            log.info("  x-goog-api-key present (IGNORED by gateway, using proxy's own key)")
+        else:
+            log.info("  x-goog-api-key absent (gateway auth via custom headers)")
+
         headers = {"Content-Type": "application/json", **self._get_auth_headers()}
 
         try:

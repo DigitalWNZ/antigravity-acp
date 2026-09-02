@@ -4,10 +4,13 @@
 import asyncio
 import asyncio.subprocess as aio_subprocess
 import contextlib
+import json
 import logging
 import os
 import sys
 from typing import Any
+
+from aiohttp import web, ClientSession, ClientTimeout
 
 from acp import PROTOCOL_VERSION, connect_to_agent, text_block
 from acp.core import ClientSideConnection
@@ -128,6 +131,70 @@ class TestClient(Client):
         pass
 
 
+class HeaderInjectionSidecar:
+    """Lightweight reverse proxy that injects custom headers and forwards to the gateway."""
+
+    def __init__(self, gateway_url: str, inject_headers: dict[str, str]):
+        self.gateway_url = gateway_url.rstrip("/")
+        self.inject_headers = inject_headers
+        self.session: ClientSession | None = None
+        self.runner: web.AppRunner | None = None
+        self.port: int = 0
+
+    async def start(self) -> int:
+        self.session = ClientSession(timeout=ClientTimeout(total=300))
+        app = web.Application()
+        app.router.add_route("*", "/{path:.*}", self._proxy)
+        self.runner = web.AppRunner(app)
+        await self.runner.setup()
+        site = web.TCPSite(self.runner, "127.0.0.1", 0)
+        await site.start()
+        self.port = site._server.sockets[0].getsockname()[1]
+        return self.port
+
+    async def stop(self):
+        if self.session:
+            await self.session.close()
+        if self.runner:
+            await self.runner.cleanup()
+
+    async def _proxy(self, request: web.Request) -> web.StreamResponse:
+        target_url = f"{self.gateway_url}/{request.path_qs.lstrip('/')}"
+        body = await request.read()
+
+        headers = dict(request.headers)
+        headers.pop("Host", None)
+        headers.pop("x-goog-api-key", None)
+        headers.pop("X-Goog-Api-Key", None)
+        headers.update(self.inject_headers)
+
+        log = logging.getLogger("sidecar")
+        log.info("→ %s %s", request.method, target_url)
+        log.info("  Injected headers: %s", self.inject_headers)
+
+        resp = await self.session.request(
+            request.method, target_url, data=body, headers=headers,
+        )
+
+        if "text/event-stream" in (resp.content_type or ""):
+            response = web.StreamResponse(
+                status=resp.status,
+                headers={"Content-Type": resp.content_type, "Cache-Control": "no-cache"},
+            )
+            await response.prepare(request)
+            async for chunk in resp.content.iter_any():
+                await response.write(chunk)
+            await response.write_eof()
+            return response
+
+        resp_body = await resp.read()
+        return web.Response(
+            status=resp.status,
+            content_type=resp.content_type or "application/json",
+            body=resp_body,
+        )
+
+
 async def read_console(prompt: str) -> str:
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, lambda: input(prompt))
@@ -164,6 +231,10 @@ async def main() -> int:
     parser.add_argument("--message", "-m", default=None,
                         help="Single message to send (otherwise interactive mode)")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    parser.add_argument("--gateway-url", default=None,
+                        help="Gateway proxy URL (e.g. http://localhost:8080)")
+    parser.add_argument("--header", action="append", default=[],
+                        help="Custom header to inject: 'Name: Value' (repeatable)")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO)
@@ -172,6 +243,26 @@ async def main() -> int:
     env["PYTHONUNBUFFERED"] = "1"
     env["PYTHONIOENCODING"] = "UTF-8"
     env["GEMINI_HOME"] = os.path.expanduser("~/.gemini")
+
+    sidecar = None
+    if args.gateway_url:
+        inject_headers = {}
+        for h in args.header:
+            name, _, value = h.partition(":")
+            inject_headers[name.strip()] = value.strip()
+
+        sidecar = HeaderInjectionSidecar(args.gateway_url, inject_headers)
+        sidecar_port = await sidecar.start()
+        sidecar_url = f"http://127.0.0.1:{sidecar_port}"
+
+        env["GOOGLE_GEMINI_BASE_URL"] = sidecar_url
+        if not env.get("GEMINI_API_KEY"):
+            env["GEMINI_API_KEY"] = "sidecar-managed"
+
+        print(f"Sidecar proxy started on {sidecar_url}")
+        print(f"  Gateway: {args.gateway_url}")
+        print(f"  Injected headers: {inject_headers}")
+        print(f"  x-goog-api-key: stripped from outgoing requests")
 
     server_path = os.path.abspath(args.server)
     server_dir = os.path.dirname(server_path)
@@ -237,6 +328,8 @@ async def main() -> int:
         with contextlib.suppress(ProcessLookupError):
             await proc.wait()
     stderr_task.cancel()
+    if sidecar:
+        await sidecar.stop()
 
     return 0
 
