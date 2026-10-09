@@ -105,7 +105,7 @@ These are the native `AGY_LLM_GATEWAY_*` env vars that the ACP server v1.3.0 rea
 | Environment Variable | Required | Description |
 |---|---|---|
 | `AGY_LLM_GATEWAY_URL` | Yes | Base URL of the customer gateway (e.g. `http://localhost:8080/`) |
-| `AGY_LLM_GATEWAY_API_KEY` | Yes | API key or token sent as `x-goog-api-key` header to the gateway |
+| `AGY_LLM_GATEWAY_API_KEY` | No | API key or token sent as `x-goog-api-key` header to the gateway. Optional — can be omitted if the gateway does not require it, or set to a dummy value (e.g. `gateway-managed`). |
 | `AGY_LLM_GATEWAY_HEADERS` | No | Comma-separated custom headers: `"key1: val1, key2: val2"` |
 | `AGY_LLM_GATEWAY_MODELS` | No | Comma-separated model allowlist (first is default). e.g. `"gemini-3.8-flash, gemini-3.7-flash"` |
 | `AGY_LLM_GATEWAY_CA_CERT` | No | Path to a custom CA certificate for TLS verification |
@@ -631,7 +631,7 @@ Content-Type: application/json
 | Default model | `gemini-3.7-flash-high` | `gemini-3.8-flash-high` |
 | Gateway URL | `GOOGLE_GEMINI_BASE_URL` (workaround) | `AGY_LLM_GATEWAY_URL` (native) |
 | Custom headers | Not supported (needs sidecar) | `AGY_LLM_GATEWAY_HEADERS` (native) |
-| Gateway API key | `GEMINI_API_KEY` (repurposed) | `AGY_LLM_GATEWAY_API_KEY` (dedicated) |
+| Gateway API key | `GEMINI_API_KEY` (repurposed, required) | `AGY_LLM_GATEWAY_API_KEY` (dedicated, optional) |
 | Model allowlist | Not supported | `AGY_LLM_GATEWAY_MODELS` |
 | CA certificate | Not supported | `AGY_LLM_GATEWAY_CA_CERT` |
 | HTTP proxy | Not supported | `AGY_LLM_GATEWAY_PROXY_URL` |
@@ -664,11 +664,15 @@ acp.exceptions.RequestError: Authentication required
 export ANTIGRAVITY_HARNESS_PATH=/path/to/agy-acp-server-v1.3.0/localharness_external
 ```
 
-### Gateway receives `x-goog-api-key` with the value from `AGY_LLM_GATEWAY_API_KEY`
+### Gateway receives `x-goog-api-key` header
 
-This is expected. The ACP server sends `x-goog-api-key` with the value from `AGY_LLM_GATEWAY_API_KEY`. Your gateway should:
+This is expected when `AGY_LLM_GATEWAY_API_KEY` is set — the ACP server sends it as the `x-goog-api-key` header. Your gateway should:
 - Use this value for gateway-level authentication, OR
 - Ignore it and authenticate independently (e.g. via ADC)
+
+If your gateway does not need an API key, you can either:
+- Omit `AGY_LLM_GATEWAY_API_KEY` entirely (tested and works)
+- Set it to a dummy value like `"gateway-managed"` (the gateway ignores it)
 
 ### Connection refused / timeout
 
